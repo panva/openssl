@@ -31,6 +31,17 @@ OpenSSL Releases
 
 ### Changes between 4.0 and 4.1 [xx XXX xxxx]
 
+ * Added TurboSHAKE and KangarooTwelve XOF digest support as per [RFC 9861].
+
+   *Filip Skokan*
+
+ * cSHAKE customization strings can now be supplied as octet strings as well
+   as UTF8 strings in the default and FIPS providers. The cSHAKE
+   implementation now also accepts customization strings of 512 bytes, matching
+   the documented limit.
+
+   *Filip Skokan*
+
  * Added test framework for testing function memory allocation failures.
 
    *Jakub Zelenka*
@@ -23015,6 +23026,7 @@ ndif
 [RFC 8422]: https://datatracker.ietf.org/doc/html/rfc8422
 [RFC 8998]: https://datatracker.ietf.org/doc/html/rfc8998#name-iana-considerations
 [RFC 9849]: https://datatracker.ietf.org/doc/html/rfc9849
+[RFC 9861]: https://datatracker.ietf.org/doc/html/rfc9861
 [SP 800-132]: https://csrc.nist.gov/pubs/sp/800/132/final
 [SP 800-185]: https://csrc.nist.gov/pubs/sp/800/185/final
 [SP 800-208]: https://csrc.nist.gov/pubs/sp/800/208/final

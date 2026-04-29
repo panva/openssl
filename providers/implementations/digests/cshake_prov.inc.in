@@ -14,7 +14,10 @@ use OpenSSL::paramnames qw(produce_param_decoder);
                          (['OSSL_DIGEST_PARAM_XOFLEN',   'xoflen',   'size_t'],
                           ['OSSL_DIGEST_PARAM_SIZE',     'xoflen',   'size_t'],
                           ['OSSL_DIGEST_PARAM_FUNCTION_NAME', 'func',   'utf8_string'],
-                          ['OSSL_DIGEST_PARAM_CUSTOMIZATION', 'custom', 'utf8_string'],
+                          ['OSSL_DIGEST_PARAM_CUSTOMIZATION', 'custom',
+                           'utf8_string', undef, 'CSHAKE_MAX_STRING'],
+                          ['OSSL_DIGEST_PARAM_CUSTOMIZATION', 'custom',
+                           'octet_string', undef, 'CSHAKE_MAX_STRING'],
                           ['OSSL_DIGEST_PARAM_PROPERTIES', 'propq',  'utf8_string'],
                          )); -}
 

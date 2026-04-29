@@ -26,7 +26,6 @@
 #include "prov/implementations.h"
 #include "internal/common.h"
 #include "internal/sha3.h"
-#include "providers/implementations/digests/cshake_prov.inc"
 
 /*
  * Length encoding will be a 1 byte size + length in bits (3 bytes max)
@@ -43,6 +42,8 @@
 /* Maximum size of both the encoded strings (N and S) */
 #define CSHAKE_MAX_ENCODED_STRING (CSHAKE_MAX_STRING + CSHAKE_MAX_ENCODED_HEADER_LEN)
 #define CSHAKE_FLAGS (PROV_DIGEST_FLAG_XOF | PROV_DIGEST_FLAG_ALGID_ABSENT)
+
+#include "providers/implementations/digests/cshake_prov.inc"
 
 typedef struct cshake_ctx_st {
     OSSL_LIB_CTX *libctx;
@@ -132,18 +133,15 @@ static int cshake_set_func_encode_string(const char *in,
     return 0; /* Name not found */
 }
 
-static int cshake_set_encode_string(const char *in,
+static int cshake_set_encode_string(const unsigned char *in, size_t inlen,
     uint8_t *out, size_t outmax, size_t *outlen)
 {
-    size_t inlen;
-
     if (*outlen != 0)
         OPENSSL_cleanse(out, outmax);
     *outlen = 0;
     if (in == NULL)
-        return 1;
+        return inlen == 0;
 
-    inlen = strlen(in);
     /*
      * Don't encode an empty string here - this is done manually later only when
      * one of the strings is not empty. If both are empty then we don't want it
@@ -151,10 +149,9 @@ static int cshake_set_encode_string(const char *in,
      */
     if (inlen == 0)
         return 1;
-    if (inlen >= CSHAKE_MAX_STRING)
+    if (inlen > CSHAKE_MAX_STRING)
         return 0;
-    return ossl_sp800_185_encode_string(out, outmax, outlen,
-        (const unsigned char *)in, inlen);
+    return ossl_sp800_185_encode_string(out, outmax, outlen, in, inlen);
 }
 
 /*
@@ -271,7 +268,8 @@ static int cshake_init(void *vctx, const OSSL_PARAM params[])
     ctx->inited = 0;
     ctx->xoflen = (ctx->bitlen == 128) ? 32 : 64; /* Set default values here */
     cshake_set_func_encode_string(NULL, &ctx->func, &ctx->funclen);
-    cshake_set_encode_string(NULL, ctx->custom, sizeof(ctx->custom), &ctx->customlen);
+    cshake_set_encode_string(NULL, 0, ctx->custom, sizeof(ctx->custom),
+        &ctx->customlen);
     return cshake_set_ctx_params(vctx, params);
 }
 
@@ -319,9 +317,18 @@ static int cshake_set_ctx_params(void *vctx, const OSSL_PARAM params[])
         }
     }
     if (p.custom != NULL) {
-        if (p.custom->data_type != OSSL_PARAM_UTF8_STRING)
+        const unsigned char *custom = p.custom->data;
+        size_t customlen;
+
+        if (p.custom->data_type == OSSL_PARAM_UTF8_STRING) {
+            customlen = custom == NULL ? 0 : strlen(p.custom->data);
+        } else if (p.custom->data_type == OSSL_PARAM_OCTET_STRING) {
+            customlen = p.custom->data_size;
+        } else {
             return 0;
-        if (!cshake_set_encode_string(p.custom->data, ctx->custom, sizeof(ctx->custom), &ctx->customlen))
+        }
+        if (!cshake_set_encode_string(custom, customlen, ctx->custom,
+                sizeof(ctx->custom), &ctx->customlen))
             return 0;
     }
     if (p.propq != NULL) {

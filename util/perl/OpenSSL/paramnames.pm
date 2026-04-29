@@ -174,7 +174,8 @@ my %params = (
     'OSSL_DIGEST_PARAM_XOF' =>          "xof",          # int, 0 or 1
     'OSSL_DIGEST_PARAM_ALGID_ABSENT' => "algid-absent", # int, 0 or 1
     'OSSL_DIGEST_PARAM_FUNCTION_NAME' =>    "function-name", # utf8 string
-    'OSSL_DIGEST_PARAM_CUSTOMIZATION' =>    "customization", # utf8 string
+    'OSSL_DIGEST_PARAM_CUSTOMIZATION' =>    "customization", # utf8 string or octet string
+    'OSSL_DIGEST_PARAM_DOMAIN_SEPARATOR' => "domain-separator", # uint
     'OSSL_DIGEST_PARAM_PROPERTIES' => '*OSSL_ALG_PARAM_PROPERTIES',# utf8 string
 
 # external mu digest parameters
@@ -873,6 +874,7 @@ sub output_param_decoder {
         my $pident = $params[$i][1];
         my $ptype = $params[$i][2];
         my $pnum = $params[$i][3];
+        my $psize = $params[$i][4];
 
         $prms{$pname} = $pident;
 
@@ -897,9 +899,12 @@ sub output_param_decoder {
         }
         output_ifdef($ifdefs{$pident});
         print "    OSSL_PARAM_$ptype($pname, NULL";
-        print ", 0" if $ptype eq "octet_string" || $ptype eq "octet_ptr"
-                       || $ptype eq "utf8_string" || $ptype eq "utf8_ptr"
-                       || $ptype eq "BN";
+        if ($ptype eq "octet_string" || $ptype eq "octet_ptr"
+            || $ptype eq "utf8_string" || $ptype eq "utf8_ptr"
+            || $ptype eq "BN") {
+            print ", ";
+            print defined $psize ? $psize : "0";
+        }
         printf "),\n";
         output_endifdef($ifdefs{$pident});
     }
