@@ -50,8 +50,9 @@ typedef struct {
  */
 typedef struct {
     uint16_t kdf_id; /* code point for KDF */
-    const char *mdname; /* hash alg name for the HKDF */
-    size_t Nh; /* length of hash/extract output */
+    const char *mdname; /* digest name for HKDF or single-stage derivation */
+    size_t Nh; /* length of extract output or single-stage exporter secret */
+    int two_stage; /* uses Extract/Expand rather than Derive */
 } OSSL_HPKE_KDF_INFO;
 
 /*
@@ -97,6 +98,15 @@ int ossl_hpke_labeled_expand(EVP_KDF_CTX *kctx,
     const unsigned char *suiteid, size_t suiteidlen,
     const char *label,
     const unsigned char *info, size_t infolen);
+
+int ossl_hpke_labeled_derive(OSSL_LIB_CTX *libctx, const char *propq,
+    const char *mdname,
+    unsigned char *out, size_t outlen,
+    const unsigned char *ikm, size_t ikmlen,
+    const char *protocol_label,
+    const unsigned char *suiteid, size_t suiteidlen,
+    const char *label,
+    const unsigned char *context, size_t contextlen);
 
 EVP_KDF_CTX *ossl_kdf_ctx_create(const char *kdfname, const char *mdname,
     OSSL_LIB_CTX *libctx, const char *propq);

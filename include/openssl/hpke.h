@@ -1,5 +1,5 @@
 /*
- * Copyright 2022-2024 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2022-2026 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -45,6 +45,10 @@
 #define OSSL_HPKE_KDF_ID_HKDF_SHA256 0x0001 /* HKDF-SHA256 */
 #define OSSL_HPKE_KDF_ID_HKDF_SHA384 0x0002 /* HKDF-SHA384 */
 #define OSSL_HPKE_KDF_ID_HKDF_SHA512 0x0003 /* HKDF-SHA512 */
+#define OSSL_HPKE_KDF_ID_SHAKE128 0x0010 /* SHAKE128 */
+#define OSSL_HPKE_KDF_ID_SHAKE256 0x0011 /* SHAKE256 */
+#define OSSL_HPKE_KDF_ID_TURBOSHAKE128 0x0012 /* TurboSHAKE128 */
+#define OSSL_HPKE_KDF_ID_TURBOSHAKE256 0x0013 /* TurboSHAKE256 */
 
 #define OSSL_HPKE_AEAD_ID_RESERVED 0x0000 /* not used */
 #define OSSL_HPKE_AEAD_ID_AES_GCM_128 0x0001 /* AES-GCM-128 */
@@ -61,6 +65,10 @@
 #define OSSL_HPKE_KDFSTR_256 "hkdf-sha256" /* KDF id 1 */
 #define OSSL_HPKE_KDFSTR_384 "hkdf-sha384" /* KDF id 2 */
 #define OSSL_HPKE_KDFSTR_512 "hkdf-sha512" /* KDF id 3 */
+#define OSSL_HPKE_KDFSTR_SHAKE128 "shake128" /* KDF id 0x10 */
+#define OSSL_HPKE_KDFSTR_SHAKE256 "shake256" /* KDF id 0x11 */
+#define OSSL_HPKE_KDFSTR_TURBOSHAKE128 "turboshake128" /* KDF id 0x12 */
+#define OSSL_HPKE_KDFSTR_TURBOSHAKE256 "turboshake256" /* KDF id 0x13 */
 #define OSSL_HPKE_AEADSTR_AES128GCM "aes-128-gcm" /* AEAD id 1 */
 #define OSSL_HPKE_AEADSTR_AES256GCM "aes-256-gcm" /* AEAD id 2 */
 #define OSSL_HPKE_AEADSTR_CP "chacha20-poly1305" /* AEAD id 3 */

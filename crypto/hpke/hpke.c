@@ -20,6 +20,7 @@
 #include "internal/hpke_util.h"
 #include "internal/nelem.h"
 #include "internal/common.h"
+#include "internal/packet.h"
 
 /* default buffer size for keys and internal buffers we use */
 #define OSSL_HPKE_MAXSIZE 512
@@ -640,6 +641,74 @@ err:
     return erv;
 }
 
+/* draft-ietf-hpke-hpke-04, Section 5.1: CombineSecrets_OneStage(). */
+static int hpke_do_middle_single_stage(OSSL_HPKE_CTX *ctx,
+    const unsigned char *info, size_t infolen,
+    const unsigned char *suiteid, size_t suiteidlen)
+{
+    int ret = 0;
+    unsigned char input[9 + 2 * OSSL_HPKE_MAX_PARMLEN
+        + OSSL_HPKE_MAX_SECRET + OSSL_HPKE_MAX_INFOLEN];
+    unsigned char secret[OSSL_HPKE_MAXSIZE];
+    unsigned char *key = NULL, *nonce = NULL, *exportersec = NULL;
+    size_t secretslen, inputlen;
+    size_t pskidlen = ctx->pskid == NULL ? 0 : strlen(ctx->pskid);
+    size_t keylen = ctx->aead_info->Nk;
+    size_t noncelen = ctx->aead_info->Nn;
+    size_t exporterlen = ctx->kdf_info->Nh;
+    size_t secretlen = keylen + noncelen + exporterlen;
+    WPACKET pkt;
+
+    if (secretlen > sizeof(secret)) {
+        ERR_raise(ERR_LIB_CRYPTO, ERR_R_INTERNAL_ERROR);
+        return 0;
+    }
+    /* Encode the length-prefixed secrets, followed by the public context. */
+    if (!WPACKET_init_static_len(&pkt, input, sizeof(input), 0)
+        || !WPACKET_sub_memcpy_u16(&pkt, ctx->psk, ctx->psklen)
+        || !WPACKET_sub_memcpy_u16(&pkt, ctx->shared_secret, ctx->shared_secretlen)
+        || !WPACKET_get_total_written(&pkt, &secretslen)
+        || !WPACKET_put_bytes_u8(&pkt, ctx->mode)
+        || !WPACKET_sub_memcpy_u16(&pkt, ctx->pskid, pskidlen)
+        || !WPACKET_sub_memcpy_u16(&pkt, info, infolen)
+        || !WPACKET_get_total_written(&pkt, &inputlen)
+        || !WPACKET_finish(&pkt)) {
+        ERR_raise(ERR_LIB_CRYPTO, ERR_R_INTERNAL_ERROR);
+        goto end;
+    }
+    if (!ossl_hpke_labeled_derive(ctx->libctx, ctx->propq, ctx->kdf_info->mdname,
+            secret, secretlen, input, secretslen,
+            OSSL_HPKE_SEC51LABEL, suiteid, suiteidlen,
+            OSSL_HPKE_SECRET_LABEL, input + secretslen, inputlen - secretslen))
+        goto end;
+
+    if (keylen != 0 && (key = OPENSSL_memdup(secret, keylen)) == NULL)
+        goto end;
+    if (noncelen != 0
+        && (nonce = OPENSSL_memdup(secret + keylen, noncelen)) == NULL)
+        goto end;
+    exportersec = OPENSSL_memdup(secret + keylen + noncelen, exporterlen);
+    if (exportersec == NULL)
+        goto end;
+    ctx->key = key;
+    ctx->keylen = keylen;
+    ctx->nonce = nonce;
+    ctx->noncelen = noncelen;
+    ctx->exportersec = exportersec;
+    ctx->exporterseclen = exporterlen;
+    ret = 1;
+end:
+    if (!ret) {
+        OPENSSL_clear_free(key, keylen);
+        OPENSSL_clear_free(nonce, noncelen);
+        OPENSSL_clear_free(exportersec, exporterlen);
+    }
+    WPACKET_cleanup(&pkt);
+    OPENSSL_cleanse(input, sizeof(input));
+    OPENSSL_cleanse(secret, sizeof(secret));
+    return ret;
+}
+
 /*
  * @brief do "middle" of HPKE, between KEM and AEAD
  * @param ctx is the OSSL_HPKE_CTX
@@ -647,9 +716,8 @@ err:
  * @param infolen is the length of info
  * @return 0 for error, 1 for success
  *
- * This does all the HPKE extracts and expands as defined in RFC9180
- * section 5.1, (badly termed there as a "key schedule") and sets the
- * ctx fields for the shared_secret, nonce, key and exporter_secret
+ * Derive the nonce, key and exporter_secret using the single-stage schedule
+ * from draft-ietf-hpke-hpke-04 or the two-stage schedule from RFC9180.
  */
 static int hpke_do_middle(OSSL_HPKE_CTX *ctx,
     const unsigned char *info, size_t infolen)
@@ -686,6 +754,25 @@ static int hpke_do_middle(OSSL_HPKE_CTX *ctx,
         ERR_raise(ERR_LIB_CRYPTO, ERR_R_INTERNAL_ERROR);
         return 0;
     }
+    /* check a psk was set if in that mode */
+    if (ctx->mode == OSSL_HPKE_MODE_PSK
+        || ctx->mode == OSSL_HPKE_MODE_PSKAUTH) {
+        if (ctx->psk == NULL || ctx->psklen == 0 || ctx->pskid == NULL) {
+            ERR_raise(ERR_LIB_CRYPTO, ERR_R_PASSED_INVALID_ARGUMENT);
+            return 0;
+        }
+    }
+    /* full suite details as per RFC9180 sec 5.1 */
+    suitebuf[0] = ctx->suite.kem_id / 256;
+    suitebuf[1] = ctx->suite.kem_id % 256;
+    suitebuf[2] = ctx->suite.kdf_id / 256;
+    suitebuf[3] = ctx->suite.kdf_id % 256;
+    suitebuf[4] = ctx->suite.aead_id / 256;
+    suitebuf[5] = ctx->suite.aead_id % 256;
+    if (!kdf_info->two_stage)
+        return hpke_do_middle_single_stage(ctx, info, infolen,
+            suitebuf, sizeof(suitebuf));
+
     mdname = kdf_info->mdname;
     /* create key schedule context */
     memset(ks_context, 0, sizeof(ks_context));
@@ -696,27 +783,12 @@ static int hpke_do_middle(OSSL_HPKE_CTX *ctx,
         ERR_raise(ERR_LIB_CRYPTO, ERR_R_INTERNAL_ERROR);
         return 0;
     }
-    /* check a psk was set if in that mode */
-    if (ctx->mode == OSSL_HPKE_MODE_PSK
-        || ctx->mode == OSSL_HPKE_MODE_PSKAUTH) {
-        if (ctx->psk == NULL || ctx->psklen == 0 || ctx->pskid == NULL) {
-            ERR_raise(ERR_LIB_CRYPTO, ERR_R_PASSED_INVALID_ARGUMENT);
-            return 0;
-        }
-    }
     kctx = ossl_kdf_ctx_create("HKDF", mdname, ctx->libctx, ctx->propq);
     if (kctx == NULL) {
         ERR_raise(ERR_LIB_CRYPTO, ERR_R_INTERNAL_ERROR);
         return 0;
     }
     pskidlen = (ctx->psk == NULL ? 0 : strlen(ctx->pskid));
-    /* full suite details as per RFC9180 sec 5.1 */
-    suitebuf[0] = ctx->suite.kem_id / 256;
-    suitebuf[1] = ctx->suite.kem_id % 256;
-    suitebuf[2] = ctx->suite.kdf_id / 256;
-    suitebuf[3] = ctx->suite.kdf_id % 256;
-    suitebuf[4] = ctx->suite.aead_id / 256;
-    suitebuf[5] = ctx->suite.aead_id % 256;
     /* Extract and Expand variously... */
     if (ossl_hpke_labeled_extract(kctx, ks_context + 1, halflen,
             NULL, 0, OSSL_HPKE_SEC51LABEL,
@@ -821,6 +893,11 @@ OSSL_HPKE_CTX *OSSL_HPKE_CTX_new(int mode, OSSL_HPKE_SUITE suite, int role,
         return NULL;
     }
     if (hpke_suite_check(suite, &kem_info, &kdf_info, &aead_info) != 1) {
+        ERR_raise(ERR_LIB_CRYPTO, ERR_R_PASSED_INVALID_ARGUMENT);
+        return NULL;
+    }
+    if (!kdf_info->two_stage
+        && (mode == OSSL_HPKE_MODE_AUTH || mode == OSSL_HPKE_MODE_PSKAUTH)) {
         ERR_raise(ERR_LIB_CRYPTO, ERR_R_PASSED_INVALID_ARGUMENT);
         return NULL;
     }
@@ -1276,12 +1353,6 @@ int OSSL_HPKE_export(OSSL_HPKE_CTX *ctx,
         ERR_raise(ERR_LIB_CRYPTO, ERR_R_INTERNAL_ERROR);
         return 0;
     }
-    mdname = kdf_info->mdname;
-    kctx = ossl_kdf_ctx_create("HKDF", mdname, ctx->libctx, ctx->propq);
-    if (kctx == NULL) {
-        ERR_raise(ERR_LIB_CRYPTO, ERR_R_INTERNAL_ERROR);
-        return 0;
-    }
     /* full suiteid as per RFC9180 sec 5.3 */
     suitebuf[0] = ctx->suite.kem_id / 256;
     suitebuf[1] = ctx->suite.kem_id % 256;
@@ -1289,12 +1360,27 @@ int OSSL_HPKE_export(OSSL_HPKE_CTX *ctx,
     suitebuf[3] = ctx->suite.kdf_id % 256;
     suitebuf[4] = ctx->suite.aead_id / 256;
     suitebuf[5] = ctx->suite.aead_id % 256;
-    erv = ossl_hpke_labeled_expand(kctx, secret, secretlen,
-        ctx->exportersec, ctx->exporterseclen,
-        OSSL_HPKE_SEC51LABEL,
-        suitebuf, sizeof(suitebuf),
-        OSSL_HPKE_EXP_SEC_LABEL,
-        label, labellen);
+    mdname = kdf_info->mdname;
+    if (kdf_info->two_stage) {
+        kctx = ossl_kdf_ctx_create("HKDF", mdname, ctx->libctx, ctx->propq);
+        if (kctx == NULL) {
+            ERR_raise(ERR_LIB_CRYPTO, ERR_R_INTERNAL_ERROR);
+            return 0;
+        }
+        erv = ossl_hpke_labeled_expand(kctx, secret, secretlen,
+            ctx->exportersec, ctx->exporterseclen,
+            OSSL_HPKE_SEC51LABEL,
+            suitebuf, sizeof(suitebuf),
+            OSSL_HPKE_EXP_SEC_LABEL,
+            label, labellen);
+    } else {
+        erv = ossl_hpke_labeled_derive(ctx->libctx, ctx->propq, mdname,
+            secret, secretlen, ctx->exportersec, ctx->exporterseclen,
+            OSSL_HPKE_SEC51LABEL,
+            suitebuf, sizeof(suitebuf),
+            OSSL_HPKE_EXP_SEC_LABEL,
+            label, labellen);
+    }
     EVP_KDF_CTX_free(kctx);
     if (erv != 1)
         ERR_raise(ERR_LIB_CRYPTO, ERR_R_INTERNAL_ERROR);

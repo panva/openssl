@@ -40,7 +40,7 @@ typedef struct {
 } synonymttab_t;
 
 /* max length of string we'll try map to a suite */
-#define OSSL_HPKE_MAX_SUITESTR 38
+#define OSSL_HPKE_MAX_SUITESTR 40
 
 /* Define HPKE labels from RFC9180 in hex for EBCDIC compatibility */
 /* ASCII: "HPKE-v1", in hex for EBCDIC compatibility */
@@ -102,9 +102,15 @@ static const OSSL_HPKE_AEAD_INFO hpke_aead_tab[] = {
  * See RFC9180 Section 7.3 "Table 5 AEAD IDs"
  */
 static const OSSL_HPKE_KDF_INFO hpke_kdf_tab[] = {
-    { OSSL_HPKE_KDF_ID_HKDF_SHA256, LN_sha256, SHA256_DIGEST_LENGTH },
-    { OSSL_HPKE_KDF_ID_HKDF_SHA384, LN_sha384, SHA384_DIGEST_LENGTH },
-    { OSSL_HPKE_KDF_ID_HKDF_SHA512, LN_sha512, SHA512_DIGEST_LENGTH }
+    { OSSL_HPKE_KDF_ID_HKDF_SHA256, LN_sha256, SHA256_DIGEST_LENGTH, 1 },
+    { OSSL_HPKE_KDF_ID_HKDF_SHA384, LN_sha384, SHA384_DIGEST_LENGTH, 1 },
+    { OSSL_HPKE_KDF_ID_HKDF_SHA512, LN_sha512, SHA512_DIGEST_LENGTH, 1 },
+    { OSSL_HPKE_KDF_ID_SHAKE128, SN_shake128, 32, 0 },
+    { OSSL_HPKE_KDF_ID_SHAKE256, SN_shake256, 64, 0 },
+#ifndef OPENSSL_NO_TURBOSHAKE
+    { OSSL_HPKE_KDF_ID_TURBOSHAKE128, OSSL_DIGEST_NAME_TURBOSHAKE128, 32, 0 },
+    { OSSL_HPKE_KDF_ID_TURBOSHAKE256, OSSL_DIGEST_NAME_TURBOSHAKE256, 64, 0 },
+#endif
 };
 
 /**
@@ -139,7 +145,17 @@ static const synonymttab_t kdfstrtab[] = {
     { OSSL_HPKE_KDF_ID_HKDF_SHA384,
         { OSSL_HPKE_KDFSTR_384, "0x2", "0x02", "2" } },
     { OSSL_HPKE_KDF_ID_HKDF_SHA512,
-        { OSSL_HPKE_KDFSTR_512, "0x3", "0x03", "3" } }
+        { OSSL_HPKE_KDFSTR_512, "0x3", "0x03", "3" } },
+    { OSSL_HPKE_KDF_ID_SHAKE128,
+        { OSSL_HPKE_KDFSTR_SHAKE128, "0x10", "0x0010", "16" } },
+    { OSSL_HPKE_KDF_ID_SHAKE256,
+        { OSSL_HPKE_KDFSTR_SHAKE256, "0x11", "0x0011", "17" } },
+#ifndef OPENSSL_NO_TURBOSHAKE
+    { OSSL_HPKE_KDF_ID_TURBOSHAKE128,
+        { OSSL_HPKE_KDFSTR_TURBOSHAKE128, "0x12", "0x0012", "18" } },
+    { OSSL_HPKE_KDF_ID_TURBOSHAKE256,
+        { OSSL_HPKE_KDFSTR_TURBOSHAKE256, "0x13", "0x0013", "19" } },
+#endif
 };
 static const synonymttab_t aeadstrtab[] = {
     { OSSL_HPKE_AEAD_ID_AES_GCM_128,
@@ -386,6 +402,57 @@ int ossl_hpke_labeled_expand(EVP_KDF_CTX *kctx,
 end:
     WPACKET_cleanup(&pkt);
     OPENSSL_free(labeled_info);
+    return ret;
+}
+
+/* draft-ietf-hpke-hpke-04, Section 4.4: LabeledDerive(). */
+int ossl_hpke_labeled_derive(OSSL_LIB_CTX *libctx, const char *propq,
+    const char *mdname,
+    unsigned char *out, size_t outlen,
+    const unsigned char *ikm, size_t ikmlen,
+    const char *protocol_label,
+    const unsigned char *suiteid, size_t suiteidlen,
+    const char *label,
+    const unsigned char *context, size_t contextlen)
+{
+    int ret = 0;
+    size_t labellen = strlen(label);
+    unsigned char label_len[2], output_len[2];
+    EVP_MD *md = NULL;
+    EVP_MD_CTX *mctx = NULL;
+
+    if (labellen > UINT16_MAX || outlen > UINT16_MAX) {
+        ERR_raise(ERR_LIB_CRYPTO, ERR_R_PASSED_INVALID_ARGUMENT);
+        return 0;
+    }
+    label_len[0] = labellen >> 8;
+    label_len[1] = labellen & 0xff;
+    output_len[0] = outlen >> 8;
+    output_len[1] = outlen & 0xff;
+
+    md = EVP_MD_fetch(libctx, mdname, propq);
+    mctx = EVP_MD_CTX_new();
+    if (md == NULL || mctx == NULL)
+        goto end;
+
+    /* TurboSHAKE uses its default domain separator, 0x1f. */
+    if (!EVP_DigestInit_ex2(mctx, md, NULL)
+        || !EVP_DigestUpdate(mctx, ikm, ikmlen)
+        || !EVP_DigestUpdate(mctx, LABEL_HPKEV1, strlen(LABEL_HPKEV1))
+        || !EVP_DigestUpdate(mctx, protocol_label, strlen(protocol_label))
+        || !EVP_DigestUpdate(mctx, suiteid, suiteidlen)
+        || !EVP_DigestUpdate(mctx, label_len, sizeof(label_len))
+        || !EVP_DigestUpdate(mctx, label, labellen)
+        || !EVP_DigestUpdate(mctx, output_len, sizeof(output_len))
+        || !EVP_DigestUpdate(mctx, context, contextlen)
+        || !EVP_DigestFinalXOF(mctx, out, outlen)) {
+        ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_DURING_DERIVATION);
+        goto end;
+    }
+    ret = 1;
+end:
+    EVP_MD_CTX_free(mctx);
+    EVP_MD_free(md);
     return ret;
 }
 

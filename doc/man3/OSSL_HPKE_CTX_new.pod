@@ -136,7 +136,22 @@ The KDF identifier I<kdf_id> is one of the following:
 
 =item 0x03 B<OSSL_HPKE_KDF_ID_HKDF_SHA512>
 
+=item 0x10 B<OSSL_HPKE_KDF_ID_SHAKE128>
+
+=item 0x11 B<OSSL_HPKE_KDF_ID_SHAKE256>
+
+=item 0x12 B<OSSL_HPKE_KDF_ID_TURBOSHAKE128>
+
+=item 0x13 B<OSSL_HPKE_KDF_ID_TURBOSHAKE256>
+
 =back
+
+The SHAKE and TurboSHAKE identifiers select the single-stage KDFs from
+draft-ietf-hpke-pq-05, with the key schedule and exporter defined in
+draft-ietf-hpke-hpke-04. These KDFs support B<OSSL_HPKE_MODE_BASE> and
+B<OSSL_HPKE_MODE_PSK> only. OSSL_HPKE_CTX_new() rejects their use with
+B<OSSL_HPKE_MODE_AUTH> or B<OSSL_HPKE_MODE_PSKAUTH>.
+TurboSHAKE KDFs are unavailable when OpenSSL is built with B<no-turboshake>.
 
 The AEAD identifier I<aead_id> is one of the following:
 
@@ -340,6 +355,10 @@ supplied label I<label> of size I<labellen>, to produce a secret I<secret>
 of size I<secretlen>. The sender must first call OSSL_HPKE_encap(), and the
 receiver must call OSSL_HPKE_decap() in order to derive the same shared secret.
 
+I<secretlen> must be nonzero. For HKDF suites it is limited to 255 times the
+hash output length. For SHAKE and TurboSHAKE suites it is limited to 65535
+bytes by the two-byte output length in the labeled derivation.
+
 Multiple calls to OSSL_HPKE_export() with the same inputs will produce the
 same secret.
 I<OSSL_HPKE_AEAD_ID_EXPORTONLY> may be used as the B<OSSL_HPKE_SUITE> I<aead_id>
@@ -455,7 +474,8 @@ KDF and AEAD name in that order, for example "x25519,hkdf-sha256,aes-128-gcm".
 This can be used by command line tools that accept string form names for HPKE
 codepoints. Valid (case-insensitive) names are:
 "p-256", "p-384", "p-521", "x25519" and "x448" for KEM,
-"hkdf-sha256", "hkdf-sha384" and "hkdf-sha512" for KDF, and
+"hkdf-sha256", "hkdf-sha384", "hkdf-sha512", "shake128", "shake256",
+"turboshake128" and "turboshake256" for KDF, and
 "aes-128-gcm", "aes-256-gcm", "chacha20-poly1305" and "exporter" for AEAD.
 String variants of the numbers listed in L</OSSL_HPKE_SUITE Identifiers>
 can also be used.
@@ -560,9 +580,16 @@ understand how keys or IKM values could be abused.
 
 The RFC9180 specification: https://datatracker.ietf.org/doc/rfc9180/
 
+The single-stage KDF specifications:
+L<https://www.ietf.org/archive/id/draft-ietf-hpke-pq-05.html#name-single-stage-kdfs>,
+L<https://www.ietf.org/archive/id/draft-ietf-hpke-hpke-04.html>
+
 =head1 HISTORY
 
 This functionality described here was added in OpenSSL 3.2.
+
+Support for SHAKE128, SHAKE256, TurboSHAKE128 and TurboSHAKE256 KDFs was
+added in OpenSSL 4.2.
 
 =head1 COPYRIGHT
 
